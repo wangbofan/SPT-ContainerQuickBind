@@ -2,9 +2,9 @@
 #
 # Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
-#   powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -GameDir "E:\TKF" -Deploy
+#   powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 -GameDir "D:\SPT" -Deploy
 param(
-    [string]$GameDir = "E:\GAME",
+    [string]$GameDir = "C:\SPT",
     [string]$Configuration = "Release",
     [switch]$Deploy
 )
