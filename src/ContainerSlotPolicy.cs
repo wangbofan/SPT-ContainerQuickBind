@@ -136,17 +136,16 @@ namespace ContainerQuickBind
         /// </summary>
         public static bool CanBindFromContainer(InventoryController controller, Item item)
         {
-            if (controller == null || item == null) return false;
+            string reason;
+            return Evaluate(controller, item, false, out reason);
+        }
 
-            Inventory inventory = controller.Inventory;
-            if (inventory == null || inventory.Equipment == null) return false;
-            if (!IsBindableKind(item)) return false;
-            if (HasMissingVitalParts(item)) return false;
-            if (Plugin.RequireExamined.Value && !controller.Examined(item)) return false;
-
-            EquipmentSlot slot;
-            if (!TryResolveEquipmentSlot(item, inventory.Equipment, out slot)) return false;
-            return IsSlotEnabled(slot);
+        /// <summary>
+        /// 带诊断的版本：reason 会写清是哪一条导致拒绝，方便看日志定位。
+        /// </summary>
+        public static bool CanBindFromContainer(InventoryController controller, Item item, out string reason)
+        {
+            return Evaluate(controller, item, false, out reason);
         }
 
         /// <summary>
@@ -156,19 +155,75 @@ namespace ContainerQuickBind
         /// </summary>
         public static bool CanUseBoundItem(InventoryController controller, Item item)
         {
-            if (controller == null || item == null) return false;
+            string reason;
+            return Evaluate(controller, item, true, out reason);
+        }
 
-            Inventory inventory = controller.Inventory;
-            if (inventory == null || inventory.Equipment == null) return false;
-            if (!IsBindableKind(item)) return false;
-            if (HasMissingVitalParts(item)) return false;
-            if (Plugin.RequireExamined.Value && !controller.Examined(item)) return false;
+        public static bool CanUseBoundItem(InventoryController controller, Item item, out string reason)
+        {
+            return Evaluate(controller, item, true, out reason);
+        }
 
-            if (!IsBoundToQuickbar(inventory.FastAccess, item)) return false;
+        private static bool Evaluate(InventoryController controller, Item item, bool requireBound, out string reason)
+        {
+            reason = "ok";
+
+            if (controller == null) { reason = "controller is null"; return false; }
+            if (item == null) { reason = "item is null"; return false; }
+
+            Inventory inventory;
+            try
+            {
+                inventory = controller.Inventory;
+            }
+            catch (Exception ex)
+            {
+                reason = "inventory threw: " + ex.GetType().Name;
+                return false;
+            }
+
+            if (inventory == null) { reason = "inventory is null"; return false; }
+            if (inventory.Equipment == null) { reason = "equipment is null"; return false; }
+
+            if (!IsBindableKind(item))
+            {
+                reason = "type not allowed (" + item.GetType().Name + ")";
+                return false;
+            }
+
+            if (HasMissingVitalParts(item))
+            {
+                reason = "missing vital parts";
+                return false;
+            }
+
+            if (Plugin.RequireExamined.Value && !controller.Examined(item))
+            {
+                reason = "not examined";
+                return false;
+            }
+
+            if (requireBound && !IsBoundToQuickbar(inventory.FastAccess, item))
+            {
+                reason = "not bound to quickbar";
+                return false;
+            }
 
             EquipmentSlot slot;
-            if (!TryResolveEquipmentSlot(item, inventory.Equipment, out slot)) return false;
-            return IsSlotEnabled(slot);
+            if (!TryResolveEquipmentSlot(item, inventory.Equipment, out slot))
+            {
+                reason = "not inside an allowed equipment container";
+                return false;
+            }
+
+            if (!IsSlotEnabled(slot))
+            {
+                reason = "container disabled in config (" + slot + ")";
+                return false;
+            }
+
+            reason = "ok (" + slot + ")";
+            return true;
         }
 
         /// <summary>日志用的一行描述，形如 "[背包] 布洛芬 (Meds)"。</summary>

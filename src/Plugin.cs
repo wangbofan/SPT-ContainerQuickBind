@@ -61,6 +61,7 @@ namespace ContainerQuickBind
             Log.LogInfo(string.Format("Container Quick Bind {0} loaded. {1} patch class(es) applied.", PluginInfo.Version, applied));
 
             UiFixesCompat.Initialize();
+            FikaCompat.Initialize();
         }
 
         private void BindConfig()
@@ -95,8 +96,8 @@ namespace ContainerQuickBind
             AllowTacticalDevices = Config.Bind("3. Item Types", "Allow Tactical Devices", false,
                 "允许指南针、测距仪、电台。");
 
-            RequireExamined = Config.Bind("4. Behaviour", "Require Examined", true,
-                "只有鉴定过的物品才能绑定，与原版一致。关闭后未鉴定的物品也能绑（例如刚从别人背包里捡到的药）。");
+            RequireExamined = Config.Bind("4. Behaviour", "Require Examined", false,
+                "只有鉴定过的物品才能绑定，与原版一致。默认关闭：联机（Fika）时主机端的检视状态未必同步，开着会导致主机拒绝绑定。");
 
             LogUiFixesStatus = Config.Bind("5. Compatibility", "Log UI FIX Status", true,
                 "启动时检测 UI FIX 并把协同说明输出到 BepInEx 日志。");
@@ -118,8 +119,9 @@ namespace ContainerQuickBind
     {
         public const string Guid = "com.yg.containerquickbind";
         public const string Name = "Container Quick Bind";
-        public const string Version = "1.0.0";
+        public const string Version = "1.0.1";
         public const string SptCoreGuid = "com.SPT.core";
         public const string UiFixesGuid = "com.tyfon.uifixes";
+        public const string FikaGuid = "com.fika.core";
     }
 }

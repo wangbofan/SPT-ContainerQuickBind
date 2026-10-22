@@ -1,4 +1,4 @@
-﻿# Container Quick Bind
+# Container Quick Bind
 
 逃生塔科夫（SPT 4.1.x）客户端模组：**让安全箱 / 弹挂 / 口袋 / 背包里的消耗品可以直接拖到原生快捷栏绑定，绑定后按原生 4~0 快捷键使用。**
 
@@ -32,15 +32,17 @@ if (!controller.IsAtBindablePlace(item)) return "Cannot bind item";
 1. 确认是 SPT 4.1.x（游戏本体 0.16.x），已装 BepInEx 5.4.x。
 2. 二选一：
 
-   **下载预编译版**——从 [Releases](https://github.com/wangbofan/SPT-ContainerQuickBind/releases/latest) 取 `SPT-ContainerQuickBind-1.0.0.zip`，直接解压到游戏根目录。
+   **下载预编译版**——从 [Releases](https://github.com/wangbofan/SPT-ContainerQuickBind/releases/latest) 取最新的 `SPT-ContainerQuickBind-*.zip`，直接解压到游戏根目录。
 
-   **自己编译**——见[第 7 节](#7-构建)，产物是 `dist/ContainerQuickBind.dll`。
+   **自己编译**——见[第 8 节](#8-构建)，产物是 `dist/ContainerQuickBind.dll`。
 
    无论哪种，最终都是这个位置：
 
    ```
    <游戏目录>\BepInEx\plugins\ContainerQuickBind.dll
    ```
+
+   > **用 Fika 联机的话，主机端（含 headless）也要放同一份 DLL**，否则主机校验会拒绝绑定并回滚。详见[第 6 节](#6-fika-联机必须双端安装)。
 
 3. 启动一次游戏，生成配置文件：
 
@@ -245,7 +247,63 @@ var replacement = list.FirstOrDefault(g => controller.IsAtBindablePlace(g));
 
 ---
 
-## 6. 实现说明
+## 6. Fika 联机（必须双端安装）
+
+**先说结论：主机端（含 headless）必须安装同一份 `ContainerQuickBind.dll`，只装在客户端上没有用。**
+
+### 为什么
+
+Fika 里所有库存操作都是「客户端发描述符 → 主机校验 → 主机执行 → 广播结果」。绑定走的是这条链：
+
+| 步骤 | 位置 | 发生了什么 |
+|---|---|---|
+| 1 | 客户端 | 拖拽到格子 → `BoundItemView.CanAccept` → `InventoryController.IsAtBindablePlace`，本模组在这里放行，所以拖得进去 |
+| 2 | 客户端 | 打包成 `BindItemOperationDescriptor` 发给主机 |
+| 3 | 主机 | `FikaServer.OnInventoryPacketReceived` → `IOperationHandler.CreateOperationFromDescriptor` |
+| 4 | 主机 | `BindItemOperationDescriptor.ToInventoryOperation` → `BindResult.Run(controller, item, index, simulate: true)` |
+| 5 | 主机 | `BindResult.Run` 第一行就是 `if (!controller.IsAtBindablePlace(item)) return "Cannot bind item";` ← **闸门在主机** |
+| 6 | 主机 | 判定失败 → 回 `OperationCallbackPacket(EOperationStatus = 3)` + `ResyncInventoryIdPacket` |
+| 7 | 客户端 | 日志出现 `Client operation rejected by server: N - OperationType: BindItemOperation` / `Reason: Cannot bind item`，绑定被回滚 |
+
+第 5 步用的是原版判定：`FastAccessSlots = { Pockets, TacticalVest }` 且只向上看一层父级，所以背包 / 安全箱里的东西必然被判死。**主机上没装本模组，这一步就永远是原版结果，客户端怎么放宽都没用。**
+
+### 怎么办
+
+1. 把 `ContainerQuickBind.dll` 放到**主机**的 `BepInEx\plugins\` 下（headless 是同一套目录结构，也放在它的 `BepInEx\plugins\`）。
+2. 重启主机与客户端。
+3. 主机日志里必须能看到这两行，才算主机端真的生效了：
+
+```
+[Info :Container Quick Bind] [patch] BindablePlacePatch 已安装
+[Info :Container Quick Bind] [patch] ReachablePlacePatch 已安装
+```
+
+单人模式（不经过 Fika 主机）本机既是主机，装一份就够，本节限制不适用。
+
+### 相关日志对照
+
+客户端看到：
+
+```
+[Error :Fika.Core] [ReceiveStatusFromServer]: <profileId> - Client operation rejected by server: 12 - OperationType: BindItemOperation, Owner: <profileId>
+Reason: Cannot bind item
+```
+
+主机端看到：
+
+```
+[Error :Fika.Server] ItemControllerExecutePacket: Operation conversion failed: Cannot bind item
+```
+
+两条指向同一个原因：**主机端没有本模组**，或者主机端 `Require Examined` 为 `true` 而该物品在主机侧未被标记为已检视。
+
+### 关于 Require Examined
+
+`4. Behaviour / Require Examined` 的默认值已改为 `false`。联机时主机端的检视状态未必与客户端一致，开着会让主机把「客户端看着已检视」的物品判成未检视。单人想恢复原版语义可以再打开。
+
+---
+
+## 7. 实现说明
 
 只有两个 Harmony Postfix，都在 `InventoryController` 上。
 
@@ -311,7 +369,7 @@ while (address != null) {
 
 ---
 
-## 7. 构建
+## 8. 构建
 
 本机没有 dotnet SDK，所以用 .NET Framework 自带的 csc（C# 5 语法上限，源码已按此编写）：
 
@@ -347,7 +405,7 @@ BepInEx\core\0Harmony.dll
 
 ---
 
-## 8. 已知限制
+## 9. 已知限制
 
 - **投掷物**：绑定后按快捷键是把它拿到手上（进入投掷准备），不会直接扔出去。这是原版 `TryProceed` 的分支行为，本模组不干预。
 - **`Require Examined`**：安全箱里的药如果是没鉴定过的（捡来的），默认绑不上。把这一项关掉即可。
@@ -359,7 +417,7 @@ BepInEx\core\0Harmony.dll
 
 ---
 
-## 9. 排查
+## 10. 排查
 
 打开 `Verbose Logging`，然后看 `BepInEx\LogOutput.log`：
 
@@ -384,7 +442,7 @@ BepInEx\core\0Harmony.dll
 ```
 ---
 
-## 10. 许可
+## 11. 许可
 
 MIT，见 [LICENSE](LICENSE)。
 

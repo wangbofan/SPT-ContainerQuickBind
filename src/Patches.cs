@@ -1,6 +1,7 @@
 ﻿using EFT.InventoryLogic;
 using HarmonyLib;
 using System;
+using System.Collections.Generic;
 
 namespace ContainerQuickBind
 {
@@ -18,6 +19,8 @@ namespace ContainerQuickBind
     [HarmonyPatch(typeof(InventoryController), "IsAtBindablePlace", new Type[] { typeof(Item) })]
     internal static class BindablePlacePatch
     {
+        private static readonly HashSet<string> Warned = new HashSet<string>();
+
         [HarmonyPostfix]
         [HarmonyPriority(Priority.Last)]
         private static void Postfix(InventoryController __instance, Item item, ref bool __result)
@@ -26,9 +29,10 @@ namespace ContainerQuickBind
             if (!Plugin.Enabled.Value) return;
 
             bool allowed = false;
+            string reason = "unknown";
             try
             {
-                allowed = ContainerSlotPolicy.CanBindFromContainer(__instance, item);
+                allowed = ContainerSlotPolicy.CanBindFromContainer(__instance, item, out reason);
             }
             catch (Exception ex)
             {
@@ -43,11 +47,23 @@ namespace ContainerQuickBind
                 {
                     Plugin.Log.LogInfo("[bindable] 放行 " + ContainerSlotPolicy.Describe(__instance, item));
                 }
+                return;
             }
-            else if (Plugin.VerboseLogging.Value)
-            {
-                Plugin.Log.LogInfo("[bindable] 拒绝 " + ContainerSlotPolicy.Describe(__instance, item));
-            }
+
+            // 拒绝时只在「该物品本来是本模组管的类型」时提示一次，
+            // 避免原版每次拖枪、拖护甲都刷屏。
+            if (!Plugin.VerboseLogging.Value && !ContainerSlotPolicy.IsBindableKind(item)) return;
+
+            string key = "b:" + ReasonKey(__instance, item) + ":" + reason;
+            if (!Warned.Add(key)) return;
+
+            Plugin.Log.LogWarning("[bindable] 拒绝 [" + reason + "] " + ContainerSlotPolicy.Describe(__instance, item));
+        }
+
+        internal static string ReasonKey(InventoryController controller, Item item)
+        {
+            if (item == null) return "<null>";
+            return item.Id + "@" + (controller == null ? "?" : controller.GetType().Name);
         }
     }
 
@@ -67,6 +83,8 @@ namespace ContainerQuickBind
     [HarmonyPatch(typeof(InventoryController), "IsAtReachablePlace", new Type[] { typeof(Item) })]
     internal static class ReachablePlacePatch
     {
+        private static readonly HashSet<string> Warned = new HashSet<string>();
+
         [HarmonyPostfix]
         [HarmonyPriority(Priority.Last)]
         private static void Postfix(InventoryController __instance, Item item, ref bool __result)
@@ -75,9 +93,10 @@ namespace ContainerQuickBind
             if (!Plugin.Enabled.Value) return;
 
             bool allowed = false;
+            string reason = "unknown";
             try
             {
-                allowed = ContainerSlotPolicy.CanUseBoundItem(__instance, item);
+                allowed = ContainerSlotPolicy.CanUseBoundItem(__instance, item, out reason);
             }
             catch (Exception ex)
             {
@@ -92,11 +111,15 @@ namespace ContainerQuickBind
                 {
                     Plugin.Log.LogInfo("[reachable] 放行 " + ContainerSlotPolicy.Describe(__instance, item));
                 }
+                return;
             }
-            else if (Plugin.VerboseLogging.Value)
-            {
-                Plugin.Log.LogInfo("[reachable] 拒绝 " + ContainerSlotPolicy.Describe(__instance, item));
-            }
+
+            if (!Plugin.VerboseLogging.Value && !ContainerSlotPolicy.IsBindableKind(item)) return;
+
+            string key = "r:" + BindablePlacePatch.ReasonKey(__instance, item) + ":" + reason;
+            if (!Warned.Add(key)) return;
+
+            Plugin.Log.LogWarning("[reachable] 拒绝 [" + reason + "] " + ContainerSlotPolicy.Describe(__instance, item));
         }
     }
 
