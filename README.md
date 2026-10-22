@@ -101,7 +101,7 @@ if (!controller.IsAtBindablePlace(item)) return "Cannot bind item";
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| Require Examined | `true` | 只允许已鉴定物品，与原版一致。关掉后刚从别人背包里捡到的没鉴定过的药也能绑 |
+| Require Examined | `false` | 只允许已鉴定物品，与原版一致。默认关掉：联机时主机端的检视状态未必与客户端同步，开着会让主机把「客户端看着已鉴定」的物品判成未鉴定。单人想恢复原版语义可以再打开 |
 
 ### 5. Compatibility
 
