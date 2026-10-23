@@ -301,7 +301,7 @@ Reason: Cannot bind item
 
 `4. Behaviour / Require Examined` 的默认值已改为 `false`。联机时主机端的检视状态未必与客户端一致，开着会让主机把「客户端看着已检视」的物品判成未检视。单人想恢复原版语义可以再打开。
 
-### 快捷栏之间移动（1.0.2 起已处理）
+### 快捷栏之间移动（1.0.2 / 1.0.3 分两步修好）
 
 主机端装好本模组后，第一次绑定能成，但**把药从一个快捷栏格子拖到另一个格子**会刷出成片的：
 
@@ -312,21 +312,43 @@ Reason: Cannot bind item
 
 原因和上一节不同：移动绑定被拆成 `BindItem(新槽)` 加一条子操作 `Unbind(旧槽)`，而 `UnbindResult.Run` 第一句就是 `if (!BoundItems.TryGetValue(index, out cur)) return " is not bound to "`。主机侧的 `FastAccess.BoundItems` 是网络同步出来的观察者镜像，绑定关系本身不在 Fika 的同步范围内 —— 主机在这里基本找不到旧槽的绑定，于是整个包又在「转换」阶段被打回。
 
-1.0.2 起把「解绑一个本来就没绑上的槽位」改成幂等成功：只对本模组放行的容器消耗品生效，并且只在「该槽位里确实没有别的物品」时兜底，真冲突照样交给原版报错。真正执行解绑时还会顺手清掉主机镜像里「同一个物品挂在多个槽」的脏数据，避免一次使用触发两次。
-
-主机日志里对应的行变成：
+**1.0.2** 把「解绑一个本来就没绑上的槽位」改成幂等成功：只对本模组放行的容器消耗品生效，并且只在「该槽位里确实没有别的物品」时兜底，真冲突照样交给原版报错。主机日志里对应的行变成：
 
 ```
 [Info :Container Quick Bind] [unbind] 幂等放行 [背包] 布洛芬 (Meds) @Item5 (simulate=False)
 ```
 
-（只在 `6. Debug / Verbose Logging` 打开时输出。）
+**1.0.3** 修掉了报错消失之后暴露出来的两个实际问题：
+
+| 现象 | 根因 | 修法 |
+| --- | --- | --- |
+| 从 Item4 拖到 Item5 后，**两个格子都显示这个药** | `BindResult.Run` 原版代码：`if (Any(kv => kv.Value == item)) { var r = UnbindItemDirect(item, simulate); if (r.Succeeded) list = ...; }` —— 解绑失败只静默跳过，紧接着那句 `if (!simulate) BoundItems[index] = item;` **照样执行**。联机时主机镜像里找不到 Item4，于是 Item4 保留、Item5 又写进去，一物双绑；下一次 resync 再把这份脏数据通过 `InventoryDescriptor.FastAccess` 灌回客户端 | 新增 `BindResultPatch`：原方法成功后补一条不变式 —— 一个 `Item` 只允许占一个槽位，删掉指向同一 `Item` 实例的其它槽位。`simulate` 阶段一律不动，保证预演没有副作用 |
+| 关掉背包再打开，**Item4 和 Item5 全空了** | 战局里每次收到 Fika 的 `ResyncInventoryIdPacket`，客户端都会用主机下发的 `InventoryDescriptor` 重建 `Inventory`，而 `InventoryDescriptor.FastAccess` 的类型是 `Dictionary<EBoundItem, MongoID>` —— 绑定完全由主机那份镜像决定。主机镜像一旦为空，客户端绑定整个消失 | 新增 `PreserveBindingsPatch`（`InventoryController.ReplaceInventory`）：换 `Inventory` 前按 `Item.Id` 记下本地绑定，换完后凡是新 `Inventory` 里**还没有对应 key** 的，按 Id 找回 `Item` 实例补回去。已有 key 的以新 `Inventory` 为准 —— 主机数据优先，本模组只在主机「什么都没说」时兜底 |
+
+同时 1.0.2 里那句「执行解绑时顺手清掉同一物品的多余槽位」被**撤掉**了：它会把「用户先绑 Item4、这次解的是 Item5」这种真实绑定关系一起删掉，让物品凭空失去绑定。清理重复槽位的职责已经归 `BindResultPatch`，且只在新绑定成功时执行。
+
+装好后正常流程应该是：拖 Item4 → Item5，只在 Item5 出现一个图标；关闭背包重进战局界面，Item5 仍然在。客户端日志里能看到：
+
+```
+[Warning:Container Quick Bind] [bind] 清理重复绑定 6ad96c... 保留 Item5，移除 1 个残留槽位
+[Warning:Container Quick Bind] [preserve] 重新同步后补回快捷栏绑定 Item5 -> 6ad96c...
+```
+
+（`[bind]` 要求 `6. Debug / Verbose Logging` 打开；`[preserve]` 总是输出。）
 
 ---
 
 ## 7. 实现说明
 
-只有三个 Harmony Postfix。前两个在 `InventoryController` 上，第三个在 `UnbindResult` 上。
+五个 Harmony 补丁，三个是 Postfix（`InventoryController` ×2、`UnbindResult` ×1），`BindResult` 上也是一个 Postfix，`ReplaceInventory` 上是 Prefix + Postfix 一对。全部是「追加/兜底」语义，没有一处覆盖原方法的返回值。
+
+| 补丁 | 目标 | 作用 |
+|---|---|---|
+| `BindablePlacePatch` | `InventoryController.IsAtBindablePlace` | 让容器里的物品可绑定 |
+| `ReachablePlacePatch` | `InventoryController.IsAtReachablePlace` | 让已绑定的容器物品可快捷使用 |
+| `UnbindResultPatch` | `UnbindResult.Run` | 解绑本来就没绑上的槽位时幂等成功（Fika） |
+| `BindResultPatch` | `BindResult.Run` | 一物一槽不变式，清理重复绑定 |
+| `PreserveBindingsPatch` | `InventoryController.ReplaceInventory` | resync 换 `Inventory` 时保住本地绑定 |
 
 ### `BindablePlacePatch`
 
@@ -403,7 +425,41 @@ Fika 联机时主机侧的 `BoundItems` 是观察者镜像，绑定关系不在�
 2. 该物品通过 `ContainerSlotPolicy.CanBindFromContainer`（也就是本模组本来就会放行的那批）；
 3. **槽位里确实没有别的物品**——若 `GetBoundItem(index)` 返回的是另一个物品，说明是真冲突，直接放行给原版报错。
 
-兜底成功时如果 `simulate == false`，还会顺手删掉 `BoundItems` 里所有「值等于该物品、键不等于本次槽位」的残留，避免主机镜像里一个物品挂多个槽导致一次使用触发两次。
+兜底只把 `UnbindResult.Run` 判成成功，**不动 `BoundItems` 里的任何一项**。原因是「同一物品绑在别的槽位」可能就是真实绑定（用户先绑 Item4、这次解的是 Item5），删掉会让物品凭空失去绑定。重复槽位由下面的 `BindResultPatch` 负责清理，且只在新绑定成功时执行。
+
+### `BindResultPatch`
+
+目标：`OperationResult<BindResult> BindResult.Run(InventoryController, Item, EBoundItem, bool simulate)`
+
+```csharp
+if (!controller.IsAtBindablePlace(item)) return "Cannot bind item";
+List<UnbindResult> list = null;
+if (FastAccess.BoundItems.Any(kv => kv.Value == item)) {
+    var r1 = controller.UnbindItemDirect(item, simulate);
+    if (r1.Succeeded) list = new List<UnbindResult> { r1.Value };  // 失败静默跳过
+}
+if (FastAccess.BoundItems.TryGetValue(index, out var old)) {
+    var r2 = controller.UnbindItemDirect(old, simulate);
+    if (r2.Succeeded) { list = list ?? new List<UnbindResult>(); list.Add(r2.Value); }
+}
+if (!simulate) FastAccess.BoundItems[index] = item;   // ← 无条件写
+return new BindResult(controller, item, index, list);
+```
+
+第三段那句 `set_Item` 是无条件的，所以只要前面某次 `UnbindItemDirect` 失败，新槽位照样写进去，旧槽位还留着 —— 一个物品同时挂在两个快捷栏格子上。联机时主机镜像丢了旧槽绑定，这条路必然走到。
+
+Postfix 在原方法**成功且 `simulate == false`** 时补一条不变式：一个 `Item` 只允许占一个槽位，删掉指向**同一个 `Item` 实例**的其它槽位。不碰别人的绑定，`simulate` 阶段完全不动。
+
+### `PreserveBindingsPatch`
+
+目标：`void InventoryController.ReplaceInventory(Inventory)`
+
+`InventoryDescriptor.FastAccess` 的类型是 `Dictionary<EBoundItem, MongoID>`，所以每次从主机 resync 下来的 `Inventory`，快捷栏绑定完全由主机那份镜像决定。主机镜像为空时，客户端这边就是「关掉背包再打开，格子全空」。
+
+Prefix 按 `Item.Id` 记下当前的绑定，Postfix 在新的 `Inventory` 里：
+
+- 已经有该 key → 跳过，**以主机的数据为准**；
+- 没有该 key → `TryFindItem(id)` 找回 `Item` 实例（新 `Inventory` 里是重建出来的新对象，不能直接塞旧引用），补进 `BoundItems`。
 
 ### 一个容易被忽略的点
 

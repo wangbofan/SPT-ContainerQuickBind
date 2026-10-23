@@ -54,11 +54,12 @@ namespace ContainerQuickBind
                 // 该槽位绑着另一个物品 —— 这是真的冲突，交回原版报错
                 if (bound != null && !ReferenceEquals(bound, item)) return;
 
+                // 幂等语义：目标槽位本来就没有指向 item 的绑定，所以只把「解绑」
+                // 判成成功，BoundItems 里一项都不动。
+                // 绝不能顺手删掉「同一物品绑在别的槽」的残留 —— 那可能是真实的
+                // 绑定关系（用户先绑 Item4、这次解的是 Item5），删掉会让物品
+                // 凭空失去绑定。「一物一槽」的不变式交给 BindResultPatch 维护。
                 __result = new UnbindResult(controller, item, index);
-
-                // 主机侧的镜像可能残留「同一个物品绑在多个槽」的脏数据，
-                // 真正执行解绑时顺手清掉，避免一次使用触发两次。
-                if (!simulate) RemoveStaleBindings(controller, item, index);
 
                 if (Plugin.VerboseLogging.Value)
                 {
@@ -74,23 +75,6 @@ namespace ContainerQuickBind
             {
                 Plugin.Log.LogError("[unbind] 兜底异常: " + ex);
             }
-        }
-
-        private static void RemoveStaleBindings(InventoryController controller, Item item, EBoundItem keep)
-        {
-            Dictionary<EBoundItem, Item> boundItems = controller.Inventory.FastAccess.BoundItems;
-            List<EBoundItem> stale = null;
-
-            foreach (KeyValuePair<EBoundItem, Item> kv in boundItems)
-            {
-                if (kv.Key == keep) continue;
-                if (!ReferenceEquals(kv.Value, item)) continue;
-                if (stale == null) stale = new List<EBoundItem>();
-                stale.Add(kv.Key);
-            }
-
-            if (stale == null) return;
-            for (int i = 0; i < stale.Count; i++) boundItems.Remove(stale[i]);
         }
     }
 }

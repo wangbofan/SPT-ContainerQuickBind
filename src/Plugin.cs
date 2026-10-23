@@ -119,7 +119,7 @@ namespace ContainerQuickBind
     {
         public const string Guid = "com.yg.containerquickbind";
         public const string Name = "Container Quick Bind";
-        public const string Version = "1.0.2";
+        public const string Version = "1.0.3";
         public const string SptCoreGuid = "com.SPT.core";
         public const string UiFixesGuid = "com.tyfon.uifixes";
         public const string FikaGuid = "com.fika.core";

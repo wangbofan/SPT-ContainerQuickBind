@@ -1,4 +1,4 @@
-using EFT.InventoryLogic;
+﻿using EFT.InventoryLogic;
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
@@ -135,6 +135,8 @@ namespace ContainerQuickBind
             if (SafePatch(harmony, typeof(BindablePlacePatch))) ok++;
             if (SafePatch(harmony, typeof(ReachablePlacePatch))) ok++;
             if (SafePatch(harmony, typeof(UnbindResultPatch))) ok++;
+            if (SafePatch(harmony, typeof(BindResultPatch))) ok++;
+            if (SafePatch(harmony, typeof(PreserveBindingsPatch))) ok++;
             return ok;
         }
 
