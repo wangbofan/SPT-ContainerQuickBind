@@ -301,11 +301,32 @@ Reason: Cannot bind item
 
 `4. Behaviour / Require Examined` 的默认值已改为 `false`。联机时主机端的检视状态未必与客户端一致，开着会让主机把「客户端看着已检视」的物品判成未检视。单人想恢复原版语义可以再打开。
 
+### 快捷栏之间移动（1.0.2 起已处理）
+
+主机端装好本模组后，第一次绑定能成，但**把药从一个快捷栏格子拖到另一个格子**会刷出成片的：
+
+```
+[Error :Fika.Server] ItemControllerExecutePacket: Operation conversion failed:
+  Item item_meds_alusplint (id: 6ad96c...) is not bound to Item5
+```
+
+原因和上一节不同：移动绑定被拆成 `BindItem(新槽)` 加一条子操作 `Unbind(旧槽)`，而 `UnbindResult.Run` 第一句就是 `if (!BoundItems.TryGetValue(index, out cur)) return " is not bound to "`。主机侧的 `FastAccess.BoundItems` 是网络同步出来的观察者镜像，绑定关系本身不在 Fika 的同步范围内 —— 主机在这里基本找不到旧槽的绑定，于是整个包又在「转换」阶段被打回。
+
+1.0.2 起把「解绑一个本来就没绑上的槽位」改成幂等成功：只对本模组放行的容器消耗品生效，并且只在「该槽位里确实没有别的物品」时兜底，真冲突照样交给原版报错。真正执行解绑时还会顺手清掉主机镜像里「同一个物品挂在多个槽」的脏数据，避免一次使用触发两次。
+
+主机日志里对应的行变成：
+
+```
+[Info :Container Quick Bind] [unbind] 幂等放行 [背包] 布洛芬 (Meds) @Item5 (simulate=False)
+```
+
+（只在 `6. Debug / Verbose Logging` 打开时输出。）
+
 ---
 
 ## 7. 实现说明
 
-只有两个 Harmony Postfix，都在 `InventoryController` 上。
+只有三个 Harmony Postfix。前两个在 `InventoryController` 上，第三个在 `UnbindResult` 上。
 
 ### `BindablePlacePatch`
 
@@ -362,6 +383,27 @@ while (address != null) {
 5. 位于允许的容器里，且该容器开关为开。
 
 第 4 条是关键：不做「已绑定」的前置检查，等于把所有物品变成随手可得，仓库、尸体、地面的东西都能隔空使用——这是必须避免的。而原版另外还有一条 `Inventory.Stash != null && container == Inventory.Stash.Grid → false`，仓库物品本来就被挡掉，本模组不碰这条。
+
+### `UnbindResultPatch`
+
+目标：`OperationResult<UnbindResult> UnbindResult.Run(InventoryController, Item, EBoundItem, bool simulate)`
+
+原版第一句就是查表：
+
+```csharp
+if (!inventory.FastAccess.BoundItems.TryGetValue(index, out cur)) return " is not bound to ";
+if (cur != item)                                                     return " is not bound to ";
+if (!simulate) BoundItems.Remove(index);
+return new UnbindResult(controller, item, index);
+```
+
+Fika 联机时主机侧的 `BoundItems` 是观察者镜像，绑定关系不在同步范围内，所以这关过不去（详见第 6 节最后一小节）。这里把「解绑一个本来就没绑上的槽位」兜成成功，条件收得很紧：
+
+1. 原版已经失败；
+2. 该物品通过 `ContainerSlotPolicy.CanBindFromContainer`（也就是本模组本来就会放行的那批）；
+3. **槽位里确实没有别的物品**——若 `GetBoundItem(index)` 返回的是另一个物品，说明是真冲突，直接放行给原版报错。
+
+兜底成功时如果 `simulate == false`，还会顺手删掉 `BoundItems` 里所有「值等于该物品、键不等于本次槽位」的残留，避免主机镜像里一个物品挂多个槽导致一次使用触发两次。
 
 ### 一个容易被忽略的点
 
